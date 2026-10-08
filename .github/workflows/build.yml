@@ -1,4 +1,4 @@
-name: Build Recovery App
+name: Build Recovery Android App
 on:
   workflow_dispatch:
   push:
@@ -31,15 +31,15 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install dependencies
+      - name: Install web dependencies
         working-directory: app
         run: npm install --legacy-peer-deps
 
-      - name: Build production app
+      - name: Build web application
         working-directory: app
         run: npm run build
 
-      - name: Verify production app
+      - name: Verify web application
         working-directory: app
         run: |
           set -euo pipefail
@@ -55,9 +55,48 @@ jobs:
             sleep 1
           done
           grep -q '<script' /tmp/recovery-index.html
-          echo "Production app responds successfully."
 
-      - name: Package production app
+      - name: Add Android wrapper
+        working-directory: app
+        run: |
+          set -euo pipefail
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 --save --legacy-peer-deps
+          cat > capacitor.config.ts <<'EOF'
+          import type { CapacitorConfig } from '@capacitor/cli';
+
+          const config: CapacitorConfig = {
+            appId: 'com.photorecovery.recovery',
+            appName: 'Photo Recovery',
+            webDir: 'dist',
+            bundledWebRuntime: false
+          };
+
+          export default config;
+          EOF
+          npx cap add android
+          npx cap sync android
+
+      - name: Build Android APK
+        working-directory: app/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/android/app/build/outputs/apk/debug -type f -name '*.apk' | head -n1)"
+          test -n "$APK"
+          test -s "$APK"
+          echo "APK: $APK"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: photo-recovery-android-apk
+          path: app/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Package web production build
         shell: bash
         run: |
           set -euo pipefail
@@ -65,7 +104,7 @@ jobs:
           zip -qr ../recovery-web.zip dist
           test -s ../recovery-web.zip
 
-      - name: Upload production artifact
+      - name: Upload web production artifact
         uses: actions/upload-artifact@v4
         with:
           name: recovery-web
