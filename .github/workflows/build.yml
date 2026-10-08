@@ -61,17 +61,13 @@ jobs:
         run: |
           set -euo pipefail
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 --save --legacy-peer-deps
-          cat > capacitor.config.ts <<'EOF'
-          import type { CapacitorConfig } from '@capacitor/cli';
-
-          const config: CapacitorConfig = {
-            appId: 'com.photorecovery.recovery',
-            appName: 'Photo Recovery',
-            webDir: 'dist',
-            bundledWebRuntime: false
-          };
-
-          export default config;
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.photorecovery.recovery",
+            "appName": "Photo Recovery",
+            "webDir": "dist",
+            "bundledWebRuntime": false
+          }
           EOF
           npx cap add android
           npx cap sync android
