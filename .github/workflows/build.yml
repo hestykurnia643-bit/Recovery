@@ -1,0 +1,57 @@
+name: Build Recovery App
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Extract application
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n1)"
+          test -n "$ZIP"
+          mkdir -p app
+          unzip -q "$ZIP" -d app
+          find app -maxdepth 4 -type f | sort | head -300
+      - name: Build detected project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$(find app -type f \( -name package.json -o -name pubspec.yaml -o -name gradlew \) -print -quit | xargs -r dirname)"
+          test -n "$ROOT"
+          echo "Project root: $ROOT"
+          if [ -f "$ROOT/package.json" ]; then
+            cd "$ROOT"
+            if [ -f package-lock.json ]; then npm ci; else npm install; fi
+            npm run build --if-present
+            npm test --if-present
+          elif [ -f "$ROOT/pubspec.yaml" ]; then
+            cd "$ROOT"
+            flutter pub get
+            flutter analyze
+            flutter test
+            flutter build apk --debug
+          elif [ -f "$ROOT/gradlew" ]; then
+            cd "$ROOT"
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            echo 'Unsupported project type'
+            exit 1
+          fi
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-build
+          path: app/**/build/**
+          if-no-files-found: warn
