@@ -1,4 +1,4 @@
-name: Build Recovery App
+name: Build and Deploy Recovery App
 on:
   workflow_dispatch:
   push:
@@ -6,6 +6,12 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -13,49 +19,62 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Extract application
         shell: bash
         run: |
           set -euo pipefail
           ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n1)"
           test -n "$ZIP"
+          rm -rf app
           mkdir -p app
           unzip -q "$ZIP" -d app
-          find app -maxdepth 4 -type f | sort | head -300
-      - name: Build detected project
-        shell: bash
+          test -f app/package.json
+          test -f app/index.html
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm install --legacy-peer-deps
+
+      - name: Build production app
+        working-directory: app
+        run: npm run build
+
+      - name: Verify production files
+        working-directory: app
         run: |
           set -euo pipefail
-          ROOT="$(find app -type f \( -name package.json -o -name pubspec.yaml -o -name gradlew \) -print -quit | xargs -r dirname)"
-          test -n "$ROOT"
-          echo "Project root: $ROOT"
-          if [ -f "$ROOT/package.json" ]; then
-            cd "$ROOT"
-            if [ -f package-lock.json ]; then
-              npm ci --legacy-peer-deps
-            else
-              npm install --legacy-peer-deps
+          test -f dist/index.html
+          test -d dist/assets
+          python3 -m http.server 4173 --directory dist >/tmp/recovery-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173/ >/tmp/recovery-index.html; then
+              break
             fi
-            npm run build --if-present
-            npm test --if-present
-          elif [ -f "$ROOT/pubspec.yaml" ]; then
-            cd "$ROOT"
-            flutter pub get
-            flutter analyze
-            flutter test
-            flutter build apk --debug
-          elif [ -f "$ROOT/gradlew" ]; then
-            cd "$ROOT"
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          else
-            echo 'Unsupported project type'
-            exit 1
-          fi
-      - name: Upload artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
+            sleep 1
+          done
+          grep -q '<script' /tmp/recovery-index.html
+          echo "Production app responds successfully."
+
+      - name: Upload deployable artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: recovery-build
-          path: app/**/build/**
-          if-no-files-found: warn
+          path: app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
